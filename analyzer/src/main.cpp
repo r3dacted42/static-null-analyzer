@@ -28,22 +28,12 @@ int main(int argc, const char **argv) {
     }
 
     cfg::CFG cfg(ast);
-
     cfg::DotExporter exporter;
 
-    // 4. Generate the DOT string
-    // This requires the getBeginNode() getter we're adding
-    std::string dot_output = exporter.to_dot(cfg.getBeginNode());
-
-    // 5. Print to console (for the Python server)
-    //    and save to "graph.dot" for debugging
-    std::cout << dot_output << std::endl;
-
-    std::ofstream out_file("graph.dot");
-    out_file << dot_output;
-    out_file.close();
-
-    std::cerr << "Successfully generated graph.dot\n";
+    std::string dot_output = exporter.toDot(cfg.getBeginNode());
+    std::cout << dot_output;
+    // std::ofstream out_file("graph.dot");
+    // out_file << dot_output;
 
     return 0;
 }

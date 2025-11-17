@@ -20,7 +20,7 @@ struct Metadata {
     std::string kind;
     uint line;
 
-    Metadata() : line(-1) {}
+    Metadata() : line(0) {}
 };
 
 enum NodePtrType {
@@ -60,6 +60,10 @@ struct CFGNode {
 struct RValue {
     std::vector<PtrData> ptrData;
     std::string label;
+
+    RValue() : ptrData({}), label("") {}
+    RValue(std::vector<PtrData> ptrData, std::string label)
+        : ptrData(ptrData), label(label) {}
 };
 
 class CFG {
@@ -70,7 +74,7 @@ class CFG {
 
   private:
     RValue handleExpr(const json &);
-    node_ptr recWalkAST(const json &, node_ptr = nullptr);
+    node_ptr recWalkAST(const json &, node_ptr);
 
     node_ptr begin, end;
 };

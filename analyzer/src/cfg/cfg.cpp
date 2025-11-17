@@ -9,6 +9,7 @@ node_ptr new_node() {
 
 node_ptr new_node(const json &data) {
     auto node = std::make_shared<CFGNode>();
+    node->hasReturn = false;
     node->metadata.id = data["id"].get<std::string>();
     node->metadata.kind = data["kind"].get<std::string>();
     if (data.contains("loc") && data["loc"].contains("line"))
@@ -89,13 +90,13 @@ RValue CFG::handleExpr(const json &data) {
         const auto ptr = handleExpr(data["inner"][0]);
         const std::string funcName = data["name"];
         return {{{NodePtrType::DEREF, ptr.ptrData[0].refId, ptr.label, PtrState::DONTCARE}},
-                std::format("{}->{}", ptr.label, funcName)};
+                std::format("{}->{}()", ptr.label, funcName)};
     }
 
     if (!data.contains("opcode")) {
         if (data.contains("inner"))
             return handleExpr(data["inner"][0]);
-        return {{}, "unknown"};
+        return {};
     }
 
     const std::string opCode = data["opcode"];
@@ -103,8 +104,7 @@ RValue CFG::handleExpr(const json &data) {
         const auto innerValue = handleExpr(data["inner"][0]);
         if (isPtr) {
             if (opCode == "&")
-                return {{{NodePtrType::ANY, innerValue.ptrData[0].refId, innerValue.label, PtrState::REFERENCE}},
-                        "&" + innerValue.label};
+                return {{{NodePtrType::ANY, "", "", PtrState::REFERENCE}}, "&" + innerValue.label};
             if (opCode == "*")
                 return {{{NodePtrType::DEREF, innerValue.ptrData[0].refId, innerValue.label, PtrState::DONTCARE}},
                         "*" + innerValue.label};
@@ -150,63 +150,58 @@ RValue CFG::handleExpr(const json &data) {
         return {{{NodePtrType::ANY, "", "", PtrState::UNKNOWN}}, "PTR_VAL"};
     }
 
-    return {{}, "unknown"};
+    return {};
 }
 
+const std::vector<std::string> exprStmt{
+    "UnaryOperator",
+    "BinaryOperator",
+    "CXXMemberCallExpr",
+    "CXXDeleteExpr"};
+
 node_ptr CFG::recWalkAST(const json &data, node_ptr prev) {
+    if (!data.contains("kind"))
+        return prev;
     const std::string kind = data["kind"];
     const auto node = new_node(data);
-    const auto exprValue = handleExpr(data);
     if (kind == "ReturnStmt") {
         node->label = "RETURN";
         if (data.contains("inner")) {
             const auto value = handleExpr(data["inner"][0]);
-            node->label = std::format("RETURN {}", value.label);
+            node->label = std::format("return {}", value.label);
             node->ptrData = value.ptrData;
         }
         node->hasReturn = true;
-        if (prev)
-            prev->next.push_back(node);
+        prev->next.push_back(node);
         return node;
-    }
-    if (kind == "NullStmt") {
-        node->label = "NIL";
-        if (prev)
-            prev->next.push_back(node);
-        return node;
-    }
-    if (exprValue.label != "unknown") {
-        node->label = exprValue.label;
-        node->ptrData = exprValue.ptrData;
-        if (prev)
-            prev->next.push_back(node);
+    } else if (kind == "NullStmt") {
+        node->label = "nil";
+        prev->next.push_back(node);
         return node;
     }
 
-    const std::string qualType = data["type"]["qualType"];
+    const std::string qualType = data.contains("type") && data["type"].contains("qualType")
+                                     ? data["type"]["qualType"]
+                                     : "?";
     bool hasPostAction = false;
     if (kind == "FunctionDecl") {
         const std::string name = data["name"];
-        node->label = std::format("FUNC {} {}", qualType, name);
-    }
-    if (kind == "ParmVarDecl") {
+        node->label = std::format("{} {}(...)", qualType, name);
+    } else if (kind == "ParmVarDecl") {
         const std::string name = data["name"];
-        node->label = std::format("PAR {} {}", qualType, name);
+        node->label = std::format("{} {}", qualType, name);
         if (qualType.back() == '*') {
             node->ptrData.push_back({NodePtrType::DECL, node->metadata.id,
                                      name, PtrState::UNKNOWN});
         }
-        if (prev)
-            prev->next.push_back(node);
+        prev->next.push_back(node);
         return node;
-    }
-    if (kind == "CompoundStmt") {
+    } else if (kind == "CompoundStmt") {
         node->label = "{";
         hasPostAction = true;
-    }
-    if (kind == "VarDecl") {
+    } else if (kind == "VarDecl") {
         const std::string name = data["name"];
-        node->label = std::format("VAR {} {}", qualType, name);
+        node->label = std::format("{} {}", qualType, name);
         if (data.contains("inner")) {
             const auto value = handleExpr(data["inner"][0]);
             node->label = std::format("{} = {}", node->label, value.label);
@@ -215,18 +210,18 @@ node_ptr CFG::recWalkAST(const json &data, node_ptr prev) {
             node->ptrData.push_back({NodePtrType::DECL, node->metadata.id,
                                      name, PtrState::UNKNOWN});
         }
-        if (prev)
-            prev->next.push_back(node);
+        prev->next.push_back(node);
         return node;
-    }
-    if (kind == "IfStmt") {
+    } else if (kind == "IfStmt") {
         const auto inner = data["inner"];
-        const bool hasElse = data["hasElse"];
+        const bool hasElse = data.contains("hasElse");
         const auto cond = handleExpr(inner[0]);
-        node->label = std::format("IF {}", cond.label);
+        node->label = std::format("if ( {} )", cond.label);
         node->ptrData = cond.ptrData;
         const auto thenEndNode = recWalkAST(inner[1], node);
-        const auto elseEndNode = recWalkAST(inner[2], node);
+        node_ptr elseEndNode;
+        if (hasElse)
+            elseEndNode = recWalkAST(inner[2], node);
         const auto fiNode = new_node();
         fiNode->label = ".";
         if (!thenEndNode->hasReturn)
@@ -236,18 +231,17 @@ node_ptr CFG::recWalkAST(const json &data, node_ptr prev) {
                 elseEndNode->next.push_back(fiNode);
             if (thenEndNode->hasReturn && elseEndNode->hasReturn)
                 fiNode->hasReturn = true;
-        }
-        if (prev)
-            prev->next.push_back(node);
+        } else
+            node->next.push_back(fiNode);
+        prev->next.push_back(node);
         return fiNode;
-    }
-    if (kind == "ForStmt") {
-        node->label = "FOR";
+    } else if (kind == "ForStmt") {
+        node->label = "for";
         const auto inner = data["inner"];
         const auto initData = inner[0];
         // empty slot at [1]
         const auto condData = inner[2];
-        const auto update = inner[3];
+        const auto updateData = inner[3];
         const auto bodyData = inner[4];
         node_ptr last = node;
         if (initData.contains("kind"))
@@ -256,33 +250,40 @@ node_ptr CFG::recWalkAST(const json &data, node_ptr prev) {
             last = recWalkAST(condData, last);
         const auto condNode = last;
         last = recWalkAST(bodyData, condNode);
-        if (update.contains("kind"))
-            last = recWalkAST(kind, last);
+        if (updateData.contains("kind"))
+            last = recWalkAST(updateData, last);
         const auto doneNode = new_node();
         doneNode->label = ".";
         last->next.push_back(condNode);
+        condNode->next.push_back(doneNode);
         node->next.push_back(doneNode);
-        if (prev)
-            prev->next.push_back(node);
+        prev->next.push_back(node);
         return doneNode;
-    }
-    if (kind == "WhileStmt") {
+    } else if (kind == "WhileStmt") {
         const auto inner = data["inner"];
         const auto cond = handleExpr(inner[0]);
-        node->label = std::format("WHILE {}", cond.label);
+        node->label = std::format("while ( {} )", cond.label);
         node->ptrData = cond.ptrData;
         const auto bodyNode = recWalkAST(inner[1], node);
         const auto doneNode = new_node();
         doneNode->label = ".";
         bodyNode->next.push_back(node);
         node->next.push_back(doneNode);
-        if (prev)
-            prev->next.push_back(node);
+        prev->next.push_back(node);
         return doneNode;
+    } else if (std::find(exprStmt.begin(), exprStmt.end(), kind) != exprStmt.end()) {
+        const auto exprValue = handleExpr(data);
+        if (!exprValue.label.empty()) {
+            node->label = exprValue.label;
+            node->ptrData = exprValue.ptrData;
+            prev->next.push_back(node);
+            return node;
+        } else
+            return prev;
     }
 
     node_ptr last;
-    if (node->label != "") {
+    if (!node->label.empty()) {
         prev->next.push_back(node);
         last = node;
     } else

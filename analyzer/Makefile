@@ -7,7 +7,8 @@ CXX = g++
 # -Wall:      Enable all standard warnings
 # -Wextra:    Enable extra warnings
 # -MMD -MP:   Auto-generate dependency files (.d)
-CXXFLAGS = -std=c++23 -g -Wall -Wextra -MMD -MP
+CXXFLAGS = -std=c++23 -g -Wall -Wextra -MMD -MP \
+        	# -fsanitize=address,undefined -fno-omit-frame-pointer
 
 # CPPFLAGS (C Pre-Processor Flags):
 # -I: Add include paths for your headers
@@ -50,7 +51,6 @@ $(TARGET): $(OBJS)
 	@echo "Compiling: $<"
 	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -c $< -o $@
 
-# --- Utility Rules ---
 
 # Clean up all build artifacts
 .PHONY: clean
@@ -58,29 +58,6 @@ clean:
 	@echo "Cleaning up..."
 	rm -f $(TARGET) $(OBJS) $(DEPS) graph.dot graph.png
 	@echo "Done."
-
-# Run the analyzer on your test file
-# This assumes 'tests/00.json' is the pre-filtered JSON input
-.PHONY: run
-run: all
-	@echo "Running analyzer on tests/00.json..."
-	./$(TARGET) tests/00.json
-	@echo "Analyzer finished. Output saved to graph.dot"
-
-# Generate the graph.png from the graph.dot output
-# Requires 'graphviz' (sudo apt-get install graphviz)
-.PHONY: graph
-graph: graph.dot
-	@echo "Generating graph.png from graph.dot..."
-	dot -Tpng graph.dot -o graph.png
-	@echo "Graph saved to graph.png"
-
-# A helper to run the analysis, generate the graph, and open it
-.PHONY: view
-view: run graph
-	@echo "Opening graph.png..."
-	# Use xdg-open on Linux, or 'open' on macOS
-	xdg-open graph.png 2>/dev/null || open graph.png
 
 # Include the generated dependency files
 # The '-' allows 'make' to continue if they don't exist (e.g., on first build)
