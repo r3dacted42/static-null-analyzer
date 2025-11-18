@@ -186,7 +186,7 @@ node_ptr CFG::recWalkAST(const json &data, node_ptr prev) {
     bool hasPostAction = false;
     if (kind == "FunctionDecl") {
         const std::string name = data["name"];
-        node->label = std::format("{} {}(...)", qualType, name);
+        node->label = std::format("{} {}", qualType, name);
     } else if (kind == "ParmVarDecl") {
         const std::string name = data["name"];
         node->label = std::format("{} {}", qualType, name);

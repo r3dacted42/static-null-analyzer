@@ -1,84 +1,101 @@
 import subprocess
 import tempfile
 import os
-from flask import Flask, request, jsonify, send_file, abort
+import shutil
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import FileResponse, HTMLResponse, Response
+from pydantic import BaseModel
+from fastapi.staticfiles import StaticFiles
+from starlette.background import BackgroundTask
 
-app = Flask(__name__)
+# --- Configuration ---
+# Define paths for tools, assuming they are in the system PATH
+CLANG_CMD = "clang++"
+JQ_CMD = "jq"
+ANALYZER_CMD = "analyzer"
+DOT_CMD = "dot"
+FRONTEND_FILE = "./public/index.html"
 
-@app.route("/")
-def hello():
-    return "C++ Analyzer Server is running!"
+app = FastAPI()
 
-@app.route("/analyze", methods=["POST"])
-def analyze_code():
-    if not request.json or "code" not in request.json:
-        abort(400, description="Request must be JSON with a 'code' key.")
+class CodeInput(BaseModel):
+    code: str
+    func: str
 
-    code = request.json["code"]
+@app.get("/", response_class=HTMLResponse)
+async def get_frontend():
+    if not os.path.exists(FRONTEND_FILE):
+        raise HTTPException(status_code=404, detail="index.html not found.")
+    with open(FRONTEND_FILE, "r") as f:
+        return HTMLResponse(content=f.read())
+
+def cleanup_dir(path: str):
+    if os.path.exists(path):
+        shutil.rmtree(path)
+
+@app.post("/api/analyze")
+async def analyze_code(req: CodeInput):
+    """
+    Receives C++ code, runs the full analysis pipeline,
+    and returns the resulting CFG as a PNG image.
+    """
+    code = req.code
+    func = req.func
+
+    temp_dir = tempfile.mkdtemp()
+    cleanup = BackgroundTask(cleanup_dir, temp_dir)
+    
+    code_filename = os.path.join(temp_dir, "user_code.cpp")
+    ast_filename = os.path.join(temp_dir, "ast.json")
+    filtered_ast_filename = os.path.join(temp_dir, "filtered_ast.json")
+    svg_filename = os.path.join(temp_dir, "graph.svg")
+
     try:
-        # 1. Create a temp file for the user's C++ code
-        with tempfile.NamedTemporaryFile(suffix=".cpp", delete=False) as code_file:
-            code_file.write(code.encode("utf-8"))
-            code_filename = code_file.name
-        
-        # 2. Create temp files for the outputs
-        ast_file = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
-        filtered_ast_file = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
-        dot_file = tempfile.NamedTemporaryFile(suffix=".dot", delete=False)
-        png_file = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        with open(code_filename, "w") as f:
+            f.write(code)
 
-        # 3. Run Clang to generate AST JSON
-        # Note: We must use clang++ for C++ code
         clang_cmd = [
-            "clang++", "-std=c++17", "-Xclang", "-ast-dump=json",
-            code_filename
+            CLANG_CMD, "-std=c++17", "-fsyntax-only", "-Xclang", "-ast-dump=json",
+            "-Xclang", f'-ast-dump-filter={func}', code_filename
         ]
-        with open(ast_file.name, "w") as f_out:
-            subprocess.run(clang_cmd, stdout=f_out, stderr=subprocess.PIPE, check=True)
+        with open(ast_filename, "w") as f_out:
+            subprocess.run(
+                clang_cmd, stdout=f_out, stderr=subprocess.PIPE, check=True
+            )
 
-        # 4. Run jq to filter the AST (as we discussed)
-        # This selects only FunctionDecls from the user's file
         jq_cmd = [
-            "jq",
-            f'.inner[] | select(.kind == "FunctionDecl" and .loc.file == "{code_filename}")',
-            ast_file.name
+            JQ_CMD,
+            f'select(.kind == "FunctionDecl" and .loc.file == "{code_filename}")',
+            ast_filename
         ]
-        with open(filtered_ast_file.name, "w") as f_out:
+        with open(filtered_ast_filename, "w") as f_out:
             subprocess.run(jq_cmd, stdout=f_out, stderr=subprocess.PIPE, check=True)
 
-        # 5. Run your C++ analyzer on the filtered JSON
-        # Your analyzer prints the DOT string to stdout
-        analyzer_cmd = ["analyzer", filtered_ast_file.name]
+        analyzer_cmd = [ANALYZER_CMD, filtered_ast_filename]
         analyzer_result = subprocess.run(
             analyzer_cmd, capture_output=True, text=True, check=True
         )
         dot_string = analyzer_result.stdout
 
-        # 6. Save the DOT string to its temp file
-        with open(dot_file.name, "w") as f:
-            f.write(dot_string)
-
-        # 7. Run Graphviz 'dot' to create the PNG
-        dot_cmd = ["dot", "-Tpng", dot_file.name, "-o", png_file.name]
-        subprocess.run(dot_cmd, stderr=subprocess.PIPE, check=True)
-
-        # 8. Send the PNG image file back to the client
-        return send_file(png_file.name, mimetype="image/png")
+        dot_cmd = [DOT_CMD, "-Tsvg", "-o", svg_filename]
+        subprocess.run(
+            dot_cmd, input=dot_string, text=True, stderr=subprocess.PIPE, check=True
+        )
+        return FileResponse(
+            svg_filename, 
+            media_type="image/svg+xml",
+            background=cleanup
+        )
 
     except subprocess.CalledProcessError as e:
         # Handle errors from any of the commands
-        return jsonify({
+        raise HTTPException(status_code=500, detail={
             "error": "Analysis failed",
             "command": " ".join(e.cmd),
             "stderr": e.stderr.decode("utf-8") if e.stderr else "No stderr"
-        }), 500
+        })
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
-        # Clean up all temp files
-        for f in [code_file, ast_file, filtered_ast_file, dot_file, png_file]:
-            if os.path.exists(f.name):
-                os.remove(f.name)
+        raise HTTPException(status_code=500, detail={"error": str(e)})
 
-if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=8080)
+
+app.mount("/", StaticFiles(directory="public"), name="public")

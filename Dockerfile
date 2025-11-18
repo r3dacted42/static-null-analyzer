@@ -15,6 +15,7 @@ RUN pip install -r requirements.txt
 
 COPY --from=builder /app/analyzer /usr/local/bin/analyzer
 COPY server/server.py .
+COPY server/public ./public
 
 EXPOSE 8080
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "server:app"]
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8080"]
