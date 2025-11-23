@@ -15,7 +15,7 @@ int check(int *param) {
         p2 = (int *)malloc(4);
         free(p2);
     } else
-        return -1;
+        *p2 = 10;
 
     if (p2 != nullptr) {
         p2 = new int;
@@ -24,6 +24,7 @@ int check(int *param) {
 
     for (int i = 0; i < 10; i++) {
         x = i + 5;
+        break;
     }
 
     while (p1);

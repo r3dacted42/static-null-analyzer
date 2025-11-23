@@ -1,321 +1,475 @@
 #include "cfg.hpp"
 #include <format>
+#include <iostream>
+#include <queue>
+#include <sstream>
 
 namespace cfg {
 
-node_ptr new_node() {
-    return std::make_shared<CFGNode>();
+NodeKind strToNodeKind(const std::string &kind) {
+    if (kind == "BinaryOperator")
+        return NodeKind::BinaryOperator;
+    if (kind == "BreakStmt")
+        return NodeKind::BreakStmt;
+    if (kind == "CallExpr")
+        return NodeKind::CallExpr;
+    if (kind == "CompoundStmt")
+        return NodeKind::CompoundStmt;
+    if (kind == "CXXDeleteExpr")
+        return NodeKind::CXXDeleteExpr;
+    if (kind == "FunctionDecl")
+        return NodeKind::FunctionDecl;
+    if (kind == "ImplicitCastExpr")
+        return NodeKind::ImplicitCastExpr;
+    if (kind == "MemberExpr")
+        return NodeKind::MemberExpr;
+    if (kind == "ParmVarDecl")
+        return NodeKind::ParmVarDecl;
+    if (kind == "ReturnStmt")
+        return NodeKind::ReturnStmt;
+    if (kind == "UnaryOperator")
+        return NodeKind::UnaryOperator;
+    if (kind == "VarDecl")
+        return NodeKind::VarDecl;
+    if (kind == "IfStmt" || kind == "ForStmt" || kind == "WhileStmt")
+        return NodeKind::BranchStmt;
+    return NodeKind::Other;
 }
 
-node_ptr new_node(const json &data) {
-    auto node = std::make_shared<CFGNode>();
-    node->hasReturn = false;
-    node->metadata.id = data["id"].get<std::string>();
-    node->metadata.kind = data["kind"].get<std::string>();
-    if (data.contains("loc") && data["loc"].contains("line"))
-        node->metadata.line = data["loc"]["line"];
-    else if (data.contains("range") && data["range"]["begin"].contains("line"))
-        node->metadata.line = data["range"]["begin"]["line"];
+RValKind strToRValKind(const std::string &kind) {
+    if (kind == "UnaryOperator")
+        return RValKind::UnaryOperator;
+    if (kind == "BinaryOperator")
+        return RValKind::BinaryOperator;
+    if (kind == "DeclRefExpr")
+        return RValKind::DeclRefExpr;
+    if (kind == "CallExpr")
+        return RValKind::CallExpr;
+    if (kind == "CXXNewExpr")
+        return RValKind::CXXNewExpr;
+    if (kind == "CXXConstructExpr")
+        return RValKind::CXXConstructExpr;
+    if (kind == "ImplicitCastExpr")
+        return RValKind::ImplicitCastExpr;
+    return RValKind::Other;
+}
+
+node_t CFG::make_node(const std::string &id) {
+    pool.emplace(id, new CFGNode());
+    const auto &node = pool[id].get();
+    node->metadata.id = id;
     return node;
 }
 
-RValue CFG::handleExpr(const json &data) {
-    const std::string kind = data["kind"];
-    if (kind == "IntegerLiteral")
-        return {{}, data["value"]};
-
-    const std::string qualType = data.contains("type") && data["type"].contains("qualType")
+node_t CFG::make_node(const std::string &id, const json &data) {
+    pool.emplace(id, new CFGNode());
+    const auto &node = pool[id].get();
+    const std::string qualType = data.contains("type")
                                      ? data["type"]["qualType"]
                                      : "?";
-    const bool isPtr = qualType.back() == '*';
-    const bool isFunc = qualType.contains('(');
-    if (kind == "DeclRefExpr") {
-        const auto refDecl = data["referencedDecl"];
-        const std::string name = refDecl["name"];
-        if (isPtr && !isFunc)
-            return {{{NodePtrType::ANY, refDecl["id"], name, PtrState::PTR_REF}}, name};
-        else
-            return {{}, name};
-    }
-    if (kind == "ImplicitCastExpr") {
-        const std::string castKind = data["castKind"];
-        if (isPtr && castKind == "NullToPointer") {
-            return {{{NodePtrType::ANY, "", "", PtrState::NULLPTR}}, "nullptr"};
+    node->metadata = {id, 0, 0, strToNodeKind(data["kind"]),
+                      qualType.back() == '*', qualType};
+    if (data.contains("range")) {
+        try {
+            node->metadata.offsetBegin = data["range"]["begin"]["offset"];
+            node->metadata.offsetEnd = data["range"]["end"]["offset"];
+        } catch (json::exception &e) {
+            // couldn't grab range but that's okay
         }
-        return handleExpr(data["inner"][0]);
     }
-    if (kind == "CXXNewExpr") {
-        const auto label = std::format("new {}", qualType);
-        return {{{NodePtrType::ANY, "", "", PtrState::ALLOC}}, label};
-    }
-    if (kind == "CXXDeleteExpr") {
-        auto refPtr = handleExpr(data["inner"][0]);
-        refPtr.ptrData[0].state = PtrState::DEALLOC;
-        refPtr.label = std::format("delete {}", refPtr.label);
-        return refPtr;
-    }
-    if (kind == "CallExpr") {
-        const auto inner = data["inner"];
-        const auto func = handleExpr(inner[0]);
-        const auto numArgs = inner.size() - 1;
-        if (numArgs == 0)
-            return {{}, std::format("{}()", func.label)};
-        std::vector<RValue> args(numArgs);
-        for (size_t i = 0; i < numArgs; i++)
-            args[i] = handleExpr(inner[i + 1]);
-        const auto arg0 = args[0];
-        if (numArgs == 1 && func.label == "free" && arg0.ptrData[0].state == PtrState::PTR_REF) {
-            const auto ptrData0 = arg0.ptrData[0];
-            return {{{NodePtrType::ANY, ptrData0.refId, ptrData0.name, PtrState::DEALLOC}},
-                    std::format("free({})", ptrData0.name)};
-        }
-        if (numArgs == 1 && func.label == "malloc" && inner[1]["type"]["qualType"] == "size_t")
-            return {{{NodePtrType::ANY, "", "", PtrState::ALLOC}},
-                    std::format("malloc({})", arg0.label)};
-        std::string argsStr = "";
-        for (const auto &arg : args) {
-            if (argsStr == "") {
-                argsStr = arg.label;
-                continue;
-            }
-            argsStr = std::format("{}, {}", argsStr, arg.label);
-        }
-        return {{}, std::format("{}( {} )", func.label, argsStr)};
-    }
-    if (kind == "UnaryExprOrTypeTraitExpr")
-        return {{}, std::format("{} {}", data["name"].get<std::string>(), qualType)};
-    if (kind == "CXXConstructExpr")
-        return {{}, "constructor"};
-    if (kind == "MemberExpr") {
-        const auto ptr = handleExpr(data["inner"][0]);
-        const std::string funcName = data["name"];
-        return {{{NodePtrType::DEREF, ptr.ptrData[0].refId, ptr.label, PtrState::DONTCARE}},
-                std::format("{}->{}()", ptr.label, funcName)};
-    }
-
-    if (!data.contains("opcode")) {
-        if (data.contains("inner"))
-            return handleExpr(data["inner"][0]);
-        return {};
-    }
-
-    const std::string opCode = data["opcode"];
-    if (kind == "UnaryOperator") {
-        const auto innerValue = handleExpr(data["inner"][0]);
-        if (isPtr) {
-            if (opCode == "&")
-                return {{{NodePtrType::ANY, "", "", PtrState::REFERENCE}}, "&" + innerValue.label};
-            if (opCode == "*")
-                return {{{NodePtrType::DEREF, innerValue.ptrData[0].refId, innerValue.label, PtrState::DONTCARE}},
-                        "*" + innerValue.label};
-        }
-        return {{}, opCode + innerValue.label};
-    }
-    if (kind == "BinaryOperator") {
-        const auto inner = data["inner"];
-        const std::string valCategory = data["valueCategory"];
-        const auto lhsValue = handleExpr(inner[0]);
-        const auto rhsValue = handleExpr(inner[1]);
-        const auto label = std::format("{} {} {}", lhsValue.label, opCode, rhsValue.label);
-        if (isPtr && opCode == "=" && valCategory == "lvalue" && lhsValue.ptrData.size() == 1 &&
-            lhsValue.ptrData[0].state == PtrState::PTR_REF && rhsValue.ptrData.size() == 1) {
-            return {{{NodePtrType::ASSIGN, lhsValue.ptrData[0].refId, lhsValue.label, rhsValue.ptrData[0].state}},
-                    label};
-        }
-        std::vector<PtrData> resultData;
-        resultData.reserve(lhsValue.ptrData.size() + rhsValue.ptrData.size());
-        for (const auto &p : lhsValue.ptrData)
-            resultData.push_back(p);
-        for (const auto &p : rhsValue.ptrData)
-            resultData.push_back(p);
-        if (qualType == "bool" && resultData.size() == 2) {
-            int nullCount = 0, refCount = 0;
-            for (const auto &d : resultData) {
-                nullCount += (d.state == PtrState::NULLPTR);
-                refCount += (d.state == PtrState::PTR_REF);
-            }
-            if (nullCount == 1 && refCount == 1) {
-                auto ptrRefData = resultData.front().state == PtrState::PTR_REF
-                                      ? resultData.front()
-                                      : resultData.back();
-                ptrRefData.n_type = opCode == "!="
-                                        ? NodePtrType::B_NOT_NULL
-                                        : NodePtrType::B_NULL;
-                return {{ptrRefData}, label};
-            }
-        }
-        return {resultData, label};
-    }
-    if (isPtr) {
-        return {{{NodePtrType::ANY, "", "", PtrState::UNKNOWN}}, "PTR_VAL"};
-    }
-
-    return {};
+    return node;
 }
 
-const std::vector<std::string> exprStmt{
-    "UnaryOperator",
-    "BinaryOperator",
-    "CXXMemberCallExpr",
-    "CXXDeleteExpr"};
+void CFG::erase_node(const std::string &id) {
+    if (pool.contains(id))
+        pool.erase(id);
+}
 
-node_ptr CFG::recWalkAST(const json &data, node_ptr prev) {
-    if (!data.contains("kind"))
-        return prev;
-    const std::string kind = data["kind"];
-    const auto node = new_node(data);
-    if (kind == "ReturnStmt") {
-        node->label = "RETURN";
-        if (data.contains("inner")) {
-            const auto value = handleExpr(data["inner"][0]);
-            node->label = std::format("return {}", value.label);
-            node->ptrData = value.ptrData;
+std::string getRValLabel(const RValue &rval) {
+    if (std::holds_alternative<RValTypes::Other>(rval))
+        return std::get<RValTypes::Other>(rval).label;
+    if (std::holds_alternative<RValTypes::VarRef>(rval))
+        return ("&" + std::get<RValTypes::VarRef>(rval).name);
+    if (std::holds_alternative<RValTypes::CallExpr>(rval))
+        return std::get<RValTypes::CallExpr>(rval).label;
+    if (std::holds_alternative<RValTypes::OtherPtr>(rval))
+        return std::get<RValTypes::OtherPtr>(rval).name;
+    if (std::holds_alternative<RValTypes::PtrDeref>(rval))
+        return ("*" + std::get<RValTypes::PtrDeref>(rval).name);
+    if (std::holds_alternative<RValTypes::NullPtr>(rval))
+        return "nullptr";
+    return "?";
+}
+
+RValue CFG::handleRValue(const json &data) {
+    const auto kind = data.contains("kind")
+                          ? strToRValKind(data["kind"])
+                          : RValKind::Other;
+    switch (kind) {
+    case RValKind::UnaryOperator: {
+        const std::string opcode = data["opcode"];
+        const auto &innerData = data["inner"][0];
+        const std::string &innerKind = innerData["kind"];
+        if (innerKind == "DeclRefExpr" &&
+            data["type"]["qualType"].get<std::string>().back() == '*') {
+            const auto refDecl = innerData["referencedDecl"];
+            if (opcode == "&") {
+                return RValTypes::VarRef{refDecl["id"], refDecl["name"]};
+            } else if (opcode == "*") {
+                return RValTypes::PtrDeref{refDecl["id"], refDecl["name"]};
+            }
         }
-        node->hasReturn = true;
-        prev->next.push_back(node);
-        return node;
-    } else if (kind == "NullStmt") {
-        node->label = "nil";
-        prev->next.push_back(node);
-        return node;
+        const auto res = handleRValue(innerData);
+        return RValTypes::Other{opcode + getRValLabel(res)};
     }
-
-    const std::string qualType = data.contains("type") && data["type"].contains("qualType")
-                                     ? data["type"]["qualType"]
-                                     : "?";
-    bool hasPostAction = false;
-    if (kind == "FunctionDecl") {
-        const std::string name = data["name"];
-        node->label = std::format("{} {}", qualType, name);
-    } else if (kind == "ParmVarDecl") {
-        const std::string name = data["name"];
-        node->label = std::format("{} {}", qualType, name);
-        if (qualType.back() == '*') {
-            node->ptrData.push_back({NodePtrType::DECL, node->metadata.id,
-                                     name, PtrState::UNKNOWN});
-        }
-        prev->next.push_back(node);
-        return node;
-    } else if (kind == "CompoundStmt") {
-        node->label = "{";
-        hasPostAction = true;
-    } else if (kind == "VarDecl") {
-        const std::string name = data["name"];
-        node->label = std::format("{} {}", qualType, name);
-        if (data.contains("inner")) {
-            const auto value = handleExpr(data["inner"][0]);
-            node->label = std::format("{} = {}", node->label, value.label);
-            node->ptrData = value.ptrData;
-        } else if (qualType.back() == '*') {
-            node->ptrData.push_back({NodePtrType::DECL, node->metadata.id,
-                                     name, PtrState::UNKNOWN});
-        }
-        prev->next.push_back(node);
-        return node;
-    } else if (kind == "IfStmt") {
-        const auto inner = data["inner"];
-        const bool hasElse = data.contains("hasElse");
-        const auto cond = handleExpr(inner[0]);
-        node->label = std::format("if ( {} )", cond.label);
-        node->ptrData = cond.ptrData;
-        const auto thenEndNode = recWalkAST(inner[1], node);
-        node_ptr elseEndNode;
-        if (hasElse)
-            elseEndNode = recWalkAST(inner[2], node);
-        const auto fiNode = new_node();
-        fiNode->label = ".";
-        if (!thenEndNode->hasReturn)
-            thenEndNode->next.push_back(fiNode);
-        if (hasElse) {
-            if (!elseEndNode->hasReturn)
-                elseEndNode->next.push_back(fiNode);
-            if (thenEndNode->hasReturn && elseEndNode->hasReturn)
-                fiNode->hasReturn = true;
-        } else
-            node->next.push_back(fiNode);
-        prev->next.push_back(node);
-        return fiNode;
-    } else if (kind == "ForStmt") {
-        node->label = "for";
-        const auto inner = data["inner"];
-        const auto initData = inner[0];
-        // empty slot at [1]
-        const auto condData = inner[2];
-        const auto updateData = inner[3];
-        const auto bodyData = inner[4];
-        node_ptr last = node;
-        if (initData.contains("kind"))
-            last = recWalkAST(initData, last);
-        if (condData.contains("kind"))
-            last = recWalkAST(condData, last);
-        const auto condNode = last;
-        last = recWalkAST(bodyData, condNode);
-        if (updateData.contains("kind"))
-            last = recWalkAST(updateData, last);
-        const auto doneNode = new_node();
-        doneNode->label = ".";
-        last->next.push_back(condNode);
-        condNode->next.push_back(doneNode);
-        node->next.push_back(doneNode);
-        prev->next.push_back(node);
-        return doneNode;
-    } else if (kind == "WhileStmt") {
-        const auto inner = data["inner"];
-        const auto cond = handleExpr(inner[0]);
-        node->label = std::format("while ( {} )", cond.label);
-        node->ptrData = cond.ptrData;
-        const auto bodyNode = recWalkAST(inner[1], node);
-        const auto doneNode = new_node();
-        doneNode->label = ".";
-        bodyNode->next.push_back(node);
-        node->next.push_back(doneNode);
-        prev->next.push_back(node);
-        return doneNode;
-    } else if (std::find(exprStmt.begin(), exprStmt.end(), kind) != exprStmt.end()) {
-        const auto exprValue = handleExpr(data);
-        if (!exprValue.label.empty()) {
-            node->label = exprValue.label;
-            node->ptrData = exprValue.ptrData;
-            prev->next.push_back(node);
-            return node;
-        } else
-            return prev;
+    case RValKind::BinaryOperator: {
+        const std::string opcode = data["opcode"];
+        const auto &innerData = data["inner"];
+        const auto lhs = handleRValue(innerData[0]);
+        const auto rhs = handleRValue(innerData[1]);
+        return RValTypes::Other{std::format("{} {} {}", getRValLabel(lhs), opcode, getRValLabel(rhs))};
     }
-
-    node_ptr last;
-    if (!node->label.empty()) {
-        prev->next.push_back(node);
-        last = node;
-    } else
-        last = prev;
+    case RValKind::DeclRefExpr: {
+        const auto refDecl = data["referencedDecl"];
+        if (data["type"]["qualType"].get<std::string>().back() == '*') // pointer
+            return RValTypes::OtherPtr{refDecl["id"], refDecl["name"]};
+        return RValTypes::Other{refDecl["name"]};
+    }
+    case RValKind::CallExpr: {
+        const auto &innerData = data["inner"];
+        const auto func = handleRValue(innerData[0]);
+        const auto funcName = getRValLabel(func);
+        if (funcName == "free") {
+            const auto arg0 = handleRValue(innerData[1]);
+            if (std::holds_alternative<RValTypes::OtherPtr>(arg0)) {
+                const auto ptr = std::get<RValTypes::OtherPtr>(arg0);
+                return RValTypes::CallExpr{std::format("free({})", ptr.name), false, ptr.id, ptr.name};
+            }
+        }
+        if (funcName == "malloc") {
+            const auto arg0 = handleRValue(innerData[1]);
+            return RValTypes::CallExpr{"malloc(...)", true, "", ""};
+        }
+        return RValTypes::Other{funcName + "(...)"};
+    }
+    case RValKind::CXXNewExpr: {
+        const std::string qualType = data["type"]["qualType"];
+        return RValTypes::CallExpr{"new " + qualType.substr(0, qualType.size() - 1), true, "", ""};
+    }
+    case RValKind::CXXConstructExpr: {
+        return RValTypes::Other{"constructor(...)"};
+    }
+    case RValKind::ImplicitCastExpr: {
+        if (data["castKind"] == "NullToPointer")
+            return RValTypes::NullPtr{};
+    }
+    default:
+        break;
+    }
 
     if (data.contains("inner")) {
-        for (const auto &innerData : data["inner"]) {
-            last = recWalkAST(innerData, last);
-            if (last->hasReturn)
-                break;
-        }
+        return handleRValue(data["inner"][0]);
     }
 
-    if (hasPostAction) {
-        if (kind == "CompoundStmt") {
-            const auto endNode = new_node();
-            endNode->label = "}";
-            last->next.push_back(endNode);
-            endNode->hasReturn = last->hasReturn;
-            return endNode;
+    std::stringstream labelss;
+    if (data.contains("name"))
+        labelss << data["name"].get<std::string>();
+    else if (data.contains("value"))
+        labelss << data["value"].get<std::string>();
+    else
+        labelss << "?";
+    return RValTypes::Other{labelss.str()};
+}
+
+void CFG::populatePool(const json &data) {
+    if (!data.contains("id")) // empty
+        return;
+    const std::string id = data["id"];
+    const node_t node = data.contains("kind")
+                            ? make_node(id, data)
+                            : make_node(id);
+    const auto &kind = node->metadata.kind;
+    const auto &qualType = node->metadata.qualType;
+    switch (kind) {
+    case NodeKind::FunctionDecl: {
+        node->label = std::format("{} {}", qualType, data["name"].get<std::string>());
+        break;
+    }
+    case NodeKind::ParmVarDecl: {
+        const std::string &name = data["name"];
+        node->label = std::format("{} {}", qualType, name);
+        if (node->metadata.isPtr)
+            node->ptrActions.push_back(PtrActionTypes::Declare{node->metadata.id, name});
+        return;
+    }
+    case NodeKind::CompoundStmt: {
+        node->label = "{";
+        const node_t endNode = make_node(node->metadata.id + "_end");
+        endNode->label = "}";
+        break;
+    }
+    case NodeKind::VarDecl: {
+        const std::string &name = data["name"];
+        if (node->metadata.isPtr)
+            node->ptrActions.push_back(PtrActionTypes::Declare{node->metadata.id, name});
+        node->label = std::format("{} {}", qualType, name);
+        if (data.contains("inner")) { // init value
+            const auto res = handleRValue(data["inner"][0]);
+            if (std::holds_alternative<RValTypes::NullPtr>(res)) {
+                node->ptrActions.push_back(PtrActionTypes::AssignConst{
+                    PtrActionTypes::AssignConst::AssignType::NullPtr,
+                    node->metadata.id, name});
+                node->label += " = nullptr";
+            } else if (std::holds_alternative<RValTypes::VarRef>(res)) {
+                const auto &varRef = std::get<RValTypes::VarRef>(res);
+                node->ptrActions.push_back(PtrActionTypes::AssignConst{
+                    PtrActionTypes::AssignConst::AssignType::Reference,
+                    node->metadata.id, name});
+                node->label = std::format("{} = &{}", node->label, varRef.name);
+            } else if (std::holds_alternative<RValTypes::OtherPtr>(res)) {
+                const auto &otherPtr = std::get<RValTypes::OtherPtr>(res);
+                node->ptrActions.push_back(PtrActionTypes::AssignPtr{
+                    node->metadata.id, name,
+                    otherPtr.id, otherPtr.name});
+                node->label = std::format("{} = {}", node->label, otherPtr.name);
+            } else if (std::holds_alternative<RValTypes::CallExpr>(res)) {
+                const auto &call = std::get<RValTypes::CallExpr>(res);
+                node->ptrActions.push_back(PtrActionTypes::MemMgmt{
+                    (call.isAlloc
+                         ? PtrActionTypes::MemMgmt::MemType::Alloc
+                         : PtrActionTypes::MemMgmt::MemType::Dealloc),
+                    node->metadata.id, name});
+                node->label = std::format("{} = {}", node->label, call.label);
+            } else if (std::holds_alternative<RValTypes::Other>(res)) {
+                const auto &other = std::get<RValTypes::Other>(res);
+                if (node->metadata.isPtr)
+                    node->ptrActions.push_back(PtrActionTypes::AssignConst{
+                        PtrActionTypes::AssignConst::AssignType::Other,
+                        node->metadata.id, name});
+                node->label = std::format("{} = {}", node->label, other.label);
+            }
         }
+        return;
+    }
+    case NodeKind::BinaryOperator: {
+        const std::string &opcode = data["opcode"];
+        const auto &innerData = data["inner"];
+        const auto lhs = handleRValue(innerData[0]);
+        const auto rhs = handleRValue(innerData[1]);
+        if (node->metadata.isPtr && opcode == "=") { // assignment to ptr
+            if (!std::holds_alternative<RValTypes::OtherPtr>(lhs)) {
+                return; // idk
+            }
+            const auto &ptr = std::get<RValTypes::OtherPtr>(lhs);
+            if (std::holds_alternative<RValTypes::NullPtr>(rhs)) {
+                node->ptrActions.push_back(PtrActionTypes::AssignConst{
+                    PtrActionTypes::AssignConst::AssignType::NullPtr,
+                    ptr.id, ptr.name});
+            } else if (std::holds_alternative<RValTypes::VarRef>(rhs)) {
+                node->ptrActions.push_back(PtrActionTypes::AssignConst{
+                    PtrActionTypes::AssignConst::AssignType::Reference,
+                    ptr.id, ptr.name});
+            } else if (std::holds_alternative<RValTypes::OtherPtr>(rhs)) {
+                const auto &otherPtr = std::get<RValTypes::OtherPtr>(rhs);
+                node->ptrActions.push_back(PtrActionTypes::AssignPtr{
+                    ptr.id, ptr.name,
+                    otherPtr.id, otherPtr.name});
+            } else if (std::holds_alternative<RValTypes::CallExpr>(rhs)) {
+                const auto &call = std::get<RValTypes::CallExpr>(rhs);
+                node->ptrActions.push_back(PtrActionTypes::MemMgmt{
+                    (call.isAlloc
+                         ? PtrActionTypes::MemMgmt::MemType::Alloc
+                         : PtrActionTypes::MemMgmt::MemType::Dealloc),
+                    ptr.id, ptr.name});
+            } else if (std::holds_alternative<RValTypes::Other>(rhs)) {
+                node->ptrActions.push_back(PtrActionTypes::AssignConst{
+                    PtrActionTypes::AssignConst::AssignType::Other,
+                    ptr.id, ptr.name});
+            }
+        } else if (qualType == "bool") { // branch
+            const bool isEq = opcode == "==" || opcode == "!=";
+            const auto &ptr = std::holds_alternative<RValTypes::OtherPtr>(lhs)
+                                  ? lhs
+                                  : (std::holds_alternative<RValTypes::OtherPtr>(rhs)
+                                         ? rhs
+                                         : RValTypes::Other{""});
+            const auto &nul = std::holds_alternative<RValTypes::NullPtr>(lhs)
+                                  ? lhs
+                                  : (std::holds_alternative<RValTypes::NullPtr>(rhs)
+                                         ? rhs
+                                         : RValTypes::Other{""});
+            if (isEq && !std::holds_alternative<RValTypes::Other>(ptr) &&
+                !std::holds_alternative<RValTypes::Other>(nul)) {
+                const auto &_ptr = std::get<RValTypes::OtherPtr>(ptr);
+                node->ptrActions.push_back(PtrActionTypes::Branch{
+                    (opcode == "!="
+                         ? PtrActionTypes::Branch::BranchType::NotNull
+                         : PtrActionTypes::Branch::BranchType::Null),
+                    _ptr.id, _ptr.name});
+            }
+        } else if (opcode == "=" && std::holds_alternative<RValTypes::PtrDeref>(lhs)) { // assign to deref
+            const auto &ptr = std::get<RValTypes::PtrDeref>(lhs);
+            node->ptrActions.push_back(PtrActionTypes::Deref{ptr.id, ptr.name});
+        }
+        node->label = std::format("{} {} {}", getRValLabel(lhs), opcode, getRValLabel(rhs));
+        return;
+    }
+    case NodeKind::UnaryOperator: {
+        const auto res = handleRValue(data);
+        if (std::holds_alternative<RValTypes::Other>(res)) {
+            const auto other = std::get<RValTypes::Other>(res);
+            node->label = other.label;
+        }
+        return; // don't care about ptr increment etc.
+    }
+    case NodeKind::ImplicitCastExpr: {
+        const std::string &castKind = data["castKind"];
+        if (qualType == "bool") { // branch
+            const auto res = handleRValue(data);
+            if (castKind == "PointerToBoolean") {
+                if (std::holds_alternative<RValTypes::OtherPtr>(res)) {
+                    const auto &ptr = std::get<RValTypes::OtherPtr>(res);
+                    node->ptrActions.push_back(PtrActionTypes::Branch{
+                        PtrActionTypes::Branch::BranchType::NotNull,
+                        ptr.id, ptr.name});
+                    node->label = ptr.name + " != nullptr";
+                    return;
+                }
+            }
+            node->label = getRValLabel(res);
+        }
+        break;
+    }
+    case NodeKind::CallExpr: {
+        const auto res = handleRValue(data);
+        if (std::holds_alternative<RValTypes::CallExpr>(res)) {
+            const auto &call = std::get<RValTypes::CallExpr>(res);
+            node->ptrActions.push_back(PtrActionTypes::MemMgmt{
+                (call.isAlloc
+                     ? PtrActionTypes::MemMgmt::MemType::Alloc
+                     : PtrActionTypes::MemMgmt::MemType::Dealloc),
+                call.id, call.name});
+        }
+        node->label = getRValLabel(res);
+        return;
+    }
+    case NodeKind::ReturnStmt: {
+        node->label = "return";
+        if (data.contains("inner")) {
+            const auto res = handleRValue(data["inner"][0]);
+            if (std::holds_alternative<RValTypes::PtrDeref>(res)) {
+                const auto &ptr = std::get<RValTypes::PtrDeref>(res);
+                node->ptrActions.push_back(PtrActionTypes::Deref{ptr.id, ptr.name});
+            }
+            node->label = std::format("return {}", getRValLabel(res));
+        }
+        return;
+    }
+    case NodeKind::CXXDeleteExpr: {
+        const auto ptr = handleRValue(data["inner"][0]);
+        if (!std::holds_alternative<RValTypes::OtherPtr>(ptr))
+            return;
+        const auto &_ptr = std::get<RValTypes::OtherPtr>(ptr);
+        node->ptrActions.push_back(PtrActionTypes::MemMgmt{
+            PtrActionTypes::MemMgmt::MemType::Dealloc,
+            _ptr.id, _ptr.name});
+        node->label = "delete " + _ptr.name;
+        return;
+    }
+    case NodeKind::MemberExpr: {
+        const std::string memName = data["name"];
+        const bool isArrow = data["isArrow"];
+        const auto obj = handleRValue(data["inner"][0]);
+        node->label = std::format("{}{}{}{}", getRValLabel(obj), (isArrow ? "->" : "."),
+                                  memName, (qualType.contains("function") ? "(...)" : ""));
+        if (isArrow) {
+            auto const &ptr = std::get<RValTypes::OtherPtr>(obj);
+            node->ptrActions.push_back(PtrActionTypes::Deref{ptr.id, ptr.name});
+        }
+        return;
+    }
+    case NodeKind::BranchStmt: {
+        const auto joinNode = make_node(id + "_join");
+        joinNode->label = ".";
+    }
+    default:
+        break;
+    }
+    if (node->label.empty())
+        erase_node(id);
+    if (data.contains("inner"))
+        for (const auto &innerData : data["inner"])
+            populatePool(innerData);
+}
+
+node_t CFG::linkNodes(const json &data, const node_t &prev) {
+    if (!data.contains("id")) // empty
+        return prev;
+    const std::string id = data["id"];
+    const std::string kind = data["kind"];
+    const auto _kind = strToNodeKind(kind);
+    node_t last = prev;
+    if (pool.contains(id)) {
+        const auto &node = pool[id].get();
+        prev->next.push_back(node);
+        last = node;
+    }
+
+    if (_kind == NodeKind::BranchStmt) {
+        const auto &innerData = data["inner"];
+        const auto &joinNode = pool[id + "_join"].get();
+        if (kind == "IfStmt") {
+            const auto condNode = linkNodes(innerData[0], last);
+            const auto thenEndNode = linkNodes(innerData[1], condNode);
+            if (data.contains("hasElse"))
+                last = linkNodes(innerData[2], condNode); // elseEndNode
+            else
+                last = condNode;
+            thenEndNode->next.push_back(joinNode);
+            last->next.push_back(joinNode);
+            last = joinNode;
+        } else if (kind == "WhileStmt") {
+            const auto condNode = linkNodes(innerData[0], last);
+            const auto doNode = linkNodes(innerData[1], condNode);
+            doNode->next.push_back(condNode);
+            condNode->next.push_back(joinNode);
+            last = joinNode;
+        } else if (kind == "ForStmt") {
+            const auto initNode = linkNodes(innerData[0], last);
+            // empty index 1
+            const auto condNode = linkNodes(innerData[2], initNode);
+            const auto doNode = linkNodes(innerData[4], condNode);
+            const auto updateNode = linkNodes(innerData[3], doNode);
+            updateNode->next.push_back(condNode);
+            condNode->next.push_back(joinNode);
+            last = joinNode;
+        }
+        return last;
+    }
+
+    if (data.contains("inner"))
+        for (const auto &innerData : data["inner"])
+            last = linkNodes(innerData, last);
+    switch (_kind) {
+    case NodeKind::CompoundStmt: {
+        const auto &endNode = pool[id + "_end"].get();
+        last->next.push_back(endNode);
+        last = endNode;
+    }
+    default:
+        break;
     }
     return last;
 }
 
 CFG::CFG(const json &ast) {
-    begin = new_node();
+    populatePool(ast);
+    begin = make_node("BEGIN");
     begin->label = "BEGIN";
-    const auto n = recWalkAST(ast, begin);
-    end = new_node();
+    const auto last = linkNodes(ast, begin);
+    end = make_node("END");
     end->label = "END";
-    n->next.push_back(end);
+    last->next.push_back(end);
 }
 
 } // namespace cfg

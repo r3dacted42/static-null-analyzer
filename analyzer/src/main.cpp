@@ -32,8 +32,6 @@ int main(int argc, const char **argv) {
 
     std::string dot_output = exporter.toDot(cfg.getBeginNode());
     std::cout << dot_output;
-    // std::ofstream out_file("graph.dot");
-    // out_file << dot_output;
 
     return 0;
 }

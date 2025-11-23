@@ -56,7 +56,7 @@ $(TARGET): $(OBJS)
 .PHONY: clean
 clean:
 	@echo "Cleaning up..."
-	rm -f $(TARGET) $(OBJS) $(DEPS) graph.dot graph.png
+	rm -f $(TARGET) $(OBJS) $(DEPS)
 	@echo "Done."
 
 # Include the generated dependency files

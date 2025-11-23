@@ -3,7 +3,7 @@
 
 namespace cfg {
 
-std::string DotExporter::getNodeId(node_ptr node) {
+std::string DotExporter::getNodeId(node_t node) {
     if (node_ids.find(node) == node_ids.end()) {
         node_ids[node] = "Node" + std::to_string(node_counter++);
     }
@@ -22,14 +22,14 @@ std::string DotExporter::escapeDotLabel(const std::string &s) {
     return result;
 }
 
-std::string DotExporter::toDot(node_ptr begin_node) {
+std::string DotExporter::toDot(node_t begin_node) {
     std::stringstream nodes;
     std::stringstream edges;
-    std::set<node_ptr> visited;
-    std::queue<node_ptr> q;
+    std::set<node_t> visited;
+    std::queue<node_t> q;
     q.push(begin_node);
     while (!q.empty()) {
-        node_ptr current = q.front();
+        node_t current = q.front();
         q.pop();
         if (visited.count(current)) {
             continue;

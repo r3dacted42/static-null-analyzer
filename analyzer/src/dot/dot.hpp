@@ -11,13 +11,13 @@ namespace cfg {
 
 class DotExporter {
   public:
-    std::string toDot(node_ptr begin_node);
+    std::string toDot(node_t begin_node);
 
   private:
-    std::string getNodeId(node_ptr node);
+    std::string getNodeId(node_t node);
     std::string escapeDotLabel(const std::string &s);
 
-    std::map<node_ptr, std::string> node_ids;
+    std::map<node_t, std::string> node_ids;
     int node_counter = 0;
 };
 
