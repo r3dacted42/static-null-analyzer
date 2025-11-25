@@ -17,9 +17,7 @@ using node_t = CFGNode *;
 enum class NodeKind {
     Other,
     BranchStmt, // if, for, while
-    FunctionDecl,
     ParmVarDecl,
-    CompoundStmt,
     VarDecl,
     BinaryOperator,
     UnaryOperator,

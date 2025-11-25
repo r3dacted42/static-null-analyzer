@@ -14,12 +14,8 @@ NodeKind strToNodeKind(const std::string &kind) {
         return NodeKind::BreakStmt;
     if (kind == "CallExpr")
         return NodeKind::CallExpr;
-    if (kind == "CompoundStmt")
-        return NodeKind::CompoundStmt;
     if (kind == "CXXDeleteExpr")
         return NodeKind::CXXDeleteExpr;
-    if (kind == "FunctionDecl")
-        return NodeKind::FunctionDecl;
     if (kind == "ImplicitCastExpr")
         return NodeKind::ImplicitCastExpr;
     if (kind == "MemberExpr")
@@ -232,22 +228,12 @@ void CFG::populatePool(const json &data) {
     const auto &kind = node->metadata.kind;
     const auto &qualType = node->metadata.qualType;
     switch (kind) {
-    case NodeKind::FunctionDecl: {
-        node->label = std::format("{} {}", qualType, data["name"].get<std::string>());
-        break;
-    }
     case NodeKind::ParmVarDecl: {
         const std::string &name = data["name"];
         node->label = std::format("{} {}", qualType, name);
         if (node->metadata.isPtr)
             node->ptrActions.push_back(PtrActionTypes::Declare{node->metadata.id, name});
         return;
-    }
-    case NodeKind::CompoundStmt: {
-        node->label = "{";
-        const node_t endNode = make_node(node->metadata.id + "_end");
-        endNode->label = "}";
-        break;
     }
     case NodeKind::VarDecl: {
         const std::string &name = data["name"];
@@ -505,12 +491,6 @@ node_t CFG::linkNodes(const json &data, const node_t &prev) {
         for (const auto &innerData : data["inner"])
             last = linkNodes(innerData, last);
     switch (_kind) {
-    case NodeKind::CompoundStmt: {
-        const auto &endNode = pool[id + "_end"].get();
-        last->next.push_back(endNode);
-        endNode->prev.push_back(last);
-        last = endNode;
-    }
     default:
         break;
     }
