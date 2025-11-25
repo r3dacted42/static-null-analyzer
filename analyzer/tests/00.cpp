@@ -19,7 +19,7 @@ int check(int *param) {
 
     if (p2 != nullptr) {
         p2 = new int;
-        delete p2;
+        return *p2;
     }
 
     for (int i = 0; i < 10; i++) {

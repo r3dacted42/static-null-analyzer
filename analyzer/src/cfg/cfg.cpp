@@ -3,6 +3,7 @@
 #include <iostream>
 #include <queue>
 #include <sstream>
+#include <unordered_set>
 
 namespace cfg {
 
@@ -114,7 +115,7 @@ std::string getPtrActLabel(const PtrAction &pact) {
         }
     }
     if (std::holds_alternative<PtrActionTypes::Deref>(pact))
-    return std::format("Deref {}", std::get<PtrActionTypes::Deref>(pact).name);
+        return std::format("Deref {}", std::get<PtrActionTypes::Deref>(pact).name);
     if (std::holds_alternative<PtrActionTypes::Branch>(pact)) {
         const auto &branch = std::get<PtrActionTypes::Branch>(pact);
         switch (branch.branchType) {
@@ -400,7 +401,7 @@ void CFG::populatePool(const json &data) {
             if (std::holds_alternative<RValTypes::PtrDeref>(res)) {
                 const auto &ptr = std::get<RValTypes::PtrDeref>(res);
                 node->ptrActions.push_back(PtrActionTypes::Deref{ptr.id, ptr.name});
-            } else 
+            } else
                 std::cerr << "RETURN got " << res.index() << "\n";
             node->label = std::format("return {}", getRValLabel(res));
         }
@@ -458,6 +459,7 @@ node_t CFG::linkNodes(const json &data, const node_t &prev) {
     if (pool.contains(id)) {
         const auto &node = pool[id].get();
         prev->next.push_back(node);
+        node->prev.push_back(prev);
         last = node;
     }
 
@@ -472,13 +474,17 @@ node_t CFG::linkNodes(const json &data, const node_t &prev) {
             else
                 last = condNode;
             thenEndNode->next.push_back(joinNode);
+            joinNode->prev.push_back(thenEndNode);
             last->next.push_back(joinNode);
+            joinNode->prev.push_back(last);
             last = joinNode;
         } else if (kind == "WhileStmt") {
             const auto condNode = linkNodes(innerData[0], last);
             const auto doNode = linkNodes(innerData[1], condNode);
             doNode->next.push_back(condNode);
+            condNode->prev.push_back(doNode);
             condNode->next.push_back(joinNode);
+            joinNode->prev.push_back(condNode);
             last = joinNode;
         } else if (kind == "ForStmt") {
             const auto initNode = linkNodes(innerData[0], last);
@@ -487,7 +493,9 @@ node_t CFG::linkNodes(const json &data, const node_t &prev) {
             const auto doNode = linkNodes(innerData[4], condNode);
             const auto updateNode = linkNodes(innerData[3], doNode);
             updateNode->next.push_back(condNode);
+            condNode->prev.push_back(updateNode);
             condNode->next.push_back(joinNode);
+            joinNode->prev.push_back(condNode);
             last = joinNode;
         }
         return last;
@@ -500,12 +508,59 @@ node_t CFG::linkNodes(const json &data, const node_t &prev) {
     case NodeKind::CompoundStmt: {
         const auto &endNode = pool[id + "_end"].get();
         last->next.push_back(endNode);
+        endNode->prev.push_back(last);
         last = endNode;
     }
     default:
         break;
     }
     return last;
+}
+
+void CFG::handleJumps() {
+    std::queue<node_t> q, jumpQ;
+    std::unordered_set<node_t> vis;
+    q.push(begin);
+    while (!q.empty()) {
+        const auto node = q.front();
+        q.pop();
+        if (vis.contains(node))
+            continue;
+        vis.insert(node);
+        if (node->metadata.kind == NodeKind::BreakStmt || node->metadata.kind == NodeKind::ReturnStmt)
+            jumpQ.push(node);
+        for (const auto &succ : node->next)
+            if (!vis.contains(succ))
+                q.push(succ);
+    }
+    while (!jumpQ.empty()) {
+        const auto jumpNode = jumpQ.front();
+        jumpQ.pop();
+        if (jumpNode->metadata.kind == NodeKind::BreakStmt) {
+            std::queue<node_t> q;
+            q.push(jumpNode);
+            vis.clear();
+            while (!q.empty()) {
+                const auto n = q.front();
+                q.pop();
+                vis.insert(n);
+                if (n->next.size() > 1) {
+                    jumpNode->next.clear();
+                    const auto &joinNode = n->next.back();
+                    jumpNode->next.push_back(joinNode);
+                    joinNode->prev.push_back(jumpNode);
+                    break;
+                }
+                for (const auto &pred : n->prev)
+                    if (!vis.contains(pred))
+                        q.push(pred);
+            }
+        } else if (jumpNode->metadata.kind == NodeKind::ReturnStmt) {
+            jumpNode->next.clear();
+            jumpNode->next.push_back(end);
+            end->prev.push_back(jumpNode);
+        }
+    }
 }
 
 CFG::CFG(const json &ast) {
@@ -516,6 +571,8 @@ CFG::CFG(const json &ast) {
     end = make_node("END");
     end->label = "END";
     last->next.push_back(end);
+    end->prev.push_back(last);
+    handleJumps();
 }
 
 } // namespace cfg

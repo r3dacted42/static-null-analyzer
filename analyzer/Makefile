@@ -8,7 +8,7 @@ CXX = g++
 # -Wextra:    Enable extra warnings
 # -MMD -MP:   Auto-generate dependency files (.d)
 CXXFLAGS = -std=c++23 -g -Wall -Wextra -MMD -MP \
-        	# -fsanitize=address,undefined -fno-omit-frame-pointer
+        	-fsanitize=address,undefined -fno-omit-frame-pointer
 
 # CPPFLAGS (C Pre-Processor Flags):
 # -I: Add include paths for your headers

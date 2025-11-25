@@ -105,6 +105,7 @@ struct CFGNode {
     Metadata metadata;
     std::string label;
     std::vector<node_t> next;
+    std::vector<node_t> prev;
     std::vector<PtrAction> ptrActions;
 };
 
@@ -173,6 +174,7 @@ class CFG {
     RValue handleRValue(const json &);
     void populatePool(const json &);
     node_t linkNodes(const json &, const node_t &prev);
+    void handleJumps();
 
     node_t begin, end;
     std::unordered_map<std::string, std::unique_ptr<CFGNode>> pool;

@@ -55,19 +55,27 @@ std::string DotExporter::toDot(node_t begin_node, std::unordered_set<node_t> pro
         else
             nodes << "];\n";
         int edgeIdx = 0;
-        for (const auto &successor : current->next) {
-            if (successor) {
-                std::string successor_id = getNodeId(successor);
-                edges << "  " << current_id << " -> " << successor_id;
+        for (const auto &succ : current->next) {
+            if (succ) {
+                std::string succ_id = getNodeId(succ);
+                edges << "  " << current_id << " -> " << succ_id;
                 if (isBranch)
                     edges << " [label=\"" << (edgeIdx == 0 ? "T" : "F") << "\"];\n";
                 else
                     edges << ";\n";
-                if (visited.find(successor) == visited.end())
-                    q.push(successor);
+                if (visited.find(succ) == visited.end())
+                    q.push(succ);
             }
             edgeIdx++;
         }
+        // for (const auto &pred : current->prev) {
+        //     if (pred) {
+        //         std::string pred_id = getNodeId(pred);
+        //         edges << "  " << current_id << " -> " << pred_id << " [style=\"dashed\"]";
+        //         if (visited.find(pred) == visited.end())
+        //             q.push(pred);
+        //     }
+        // }
     }
 
     std::stringstream final_dot;

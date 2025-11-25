@@ -1,5 +1,5 @@
 #include "dfa.hpp"
-#include <cstdio>
+// #include <cstdio>
 #include <iostream>
 #include <queue>
 
@@ -139,7 +139,7 @@ std::unordered_set<node_t> NullPtrAnalyzer::analyze(node_t begin_node) {
             }
         uint succIdx = 0;
         for (const auto &succ : node->next) {
-            if (!input.contains(succ) || output != input[succ] && succ != node) {
+            if ((!input.contains(succ) || output != input[succ]) && succ != node) {
                 input[succ] = join(output, input[succ], succIdx);
                 workList.push(succ);
                 for (const auto &pa : node->ptrActions)
@@ -160,13 +160,13 @@ std::unordered_set<node_t> NullPtrAnalyzer::analyze(node_t begin_node) {
         // getchar();
     }
 
-    for (const auto &[node, table] : input) {
-        std::cerr << node->label << " :\n";
-        for (const auto &[id, state] : table) {
-            std::cerr << symTable[id] << " : " << state << "\n";
-        }
-        std::cerr << "\n";
-    }
+    // for (const auto &[node, table] : input) {
+    //     std::cerr << node->label << " :\n";
+    //     for (const auto &[id, state] : table) {
+    //         std::cerr << symTable[id] << " : " << state << "\n";
+    //     }
+    //     std::cerr << "\n";
+    // }
 
     std::unordered_set<node_t> res;
     for (const auto &[node, table] : input) {
