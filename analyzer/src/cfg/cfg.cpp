@@ -85,11 +85,53 @@ void CFG::erase_node(const std::string &id) {
         pool.erase(id);
 }
 
+std::string getPtrActLabel(const PtrAction &pact) {
+    if (std::holds_alternative<PtrActionTypes::Declare>(pact))
+        return std::format("Declare {}", std::get<PtrActionTypes::Declare>(pact).name);
+    if (std::holds_alternative<PtrActionTypes::AssignConst>(pact)) {
+        const auto &assignConst = std::get<PtrActionTypes::AssignConst>(pact);
+        const std::string pref = std::format("Assign {} = ", assignConst.name);
+        switch (assignConst.assignType) {
+        case PtrActionTypes::AssignConst::AssignType::NullPtr:
+            return pref + "nullptr";
+        case PtrActionTypes::AssignConst::AssignType::Reference:
+            return pref + "&var";
+        default:
+            return pref + "?";
+        }
+    }
+    if (std::holds_alternative<PtrActionTypes::AssignPtr>(pact)) {
+        const auto &assignPtr = std::get<PtrActionTypes::AssignPtr>(pact);
+        return std::format("Assign {} = {}", assignPtr.nameL, assignPtr.nameR);
+    }
+    if (std::holds_alternative<PtrActionTypes::MemMgmt>(pact)) {
+        const auto &memMgmt = std::get<PtrActionTypes::MemMgmt>(pact);
+        switch (memMgmt.memType) {
+        case PtrActionTypes::MemMgmt::MemType::Alloc:
+            return std::format("Alloc {}", memMgmt.name);
+        case PtrActionTypes::MemMgmt::MemType::Dealloc:
+            return std::format("Dealloc {}", memMgmt.name);
+        }
+    }
+    if (std::holds_alternative<PtrActionTypes::Deref>(pact))
+    return std::format("Deref {}", std::get<PtrActionTypes::Deref>(pact).name);
+    if (std::holds_alternative<PtrActionTypes::Branch>(pact)) {
+        const auto &branch = std::get<PtrActionTypes::Branch>(pact);
+        switch (branch.branchType) {
+        case PtrActionTypes::Branch::BranchType::NotNull:
+            return std::format("Branch {} Not Null", branch.name);
+        case PtrActionTypes::Branch::BranchType::Null:
+            return std::format("Branch {} Null", branch.name);
+        }
+    }
+    return ""; // None
+}
+
 std::string getRValLabel(const RValue &rval) {
     if (std::holds_alternative<RValTypes::Other>(rval))
         return std::get<RValTypes::Other>(rval).label;
     if (std::holds_alternative<RValTypes::VarRef>(rval))
-        return ("&" + std::get<RValTypes::VarRef>(rval).name);
+        return ("&" + std::get<RValTypes::VarRef>(rval).label);
     if (std::holds_alternative<RValTypes::CallExpr>(rval))
         return std::get<RValTypes::CallExpr>(rval).label;
     if (std::holds_alternative<RValTypes::OtherPtr>(rval))
@@ -109,17 +151,15 @@ RValue CFG::handleRValue(const json &data) {
     case RValKind::UnaryOperator: {
         const std::string opcode = data["opcode"];
         const auto &innerData = data["inner"][0];
-        const std::string &innerKind = innerData["kind"];
-        if (innerKind == "DeclRefExpr" &&
-            data["type"]["qualType"].get<std::string>().back() == '*') {
-            const auto refDecl = innerData["referencedDecl"];
-            if (opcode == "&") {
-                return RValTypes::VarRef{refDecl["id"], refDecl["name"]};
-            } else if (opcode == "*") {
-                return RValTypes::PtrDeref{refDecl["id"], refDecl["name"]};
-            }
-        }
         const auto res = handleRValue(innerData);
+        if (std::holds_alternative<RValTypes::OtherPtr>(res) && opcode == "*") {
+            const auto &otherPtr = std::get<RValTypes::OtherPtr>(res);
+            return RValTypes::PtrDeref{otherPtr.id, otherPtr.name};
+        }
+        if (std::holds_alternative<RValTypes::Other>(res) && opcode == "&") {
+            const auto &other = std::get<RValTypes::Other>(res);
+            return RValTypes::VarRef{other.label};
+        }
         return RValTypes::Other{opcode + getRValLabel(res)};
     }
     case RValKind::BinaryOperator: {
@@ -225,7 +265,7 @@ void CFG::populatePool(const json &data) {
                 node->ptrActions.push_back(PtrActionTypes::AssignConst{
                     PtrActionTypes::AssignConst::AssignType::Reference,
                     node->metadata.id, name});
-                node->label = std::format("{} = &{}", node->label, varRef.name);
+                node->label = std::format("{} = &{}", node->label, varRef.label);
             } else if (std::holds_alternative<RValTypes::OtherPtr>(res)) {
                 const auto &otherPtr = std::get<RValTypes::OtherPtr>(res);
                 node->ptrActions.push_back(PtrActionTypes::AssignPtr{
@@ -360,7 +400,8 @@ void CFG::populatePool(const json &data) {
             if (std::holds_alternative<RValTypes::PtrDeref>(res)) {
                 const auto &ptr = std::get<RValTypes::PtrDeref>(res);
                 node->ptrActions.push_back(PtrActionTypes::Deref{ptr.id, ptr.name});
-            }
+            } else 
+                std::cerr << "RETURN got " << res.index() << "\n";
             node->label = std::format("return {}", getRValLabel(res));
         }
         return;
@@ -391,6 +432,11 @@ void CFG::populatePool(const json &data) {
     case NodeKind::BranchStmt: {
         const auto joinNode = make_node(id + "_join");
         joinNode->label = ".";
+        break;
+    }
+    case NodeKind::BreakStmt: {
+        node->label = "break";
+        break;
     }
     default:
         break;

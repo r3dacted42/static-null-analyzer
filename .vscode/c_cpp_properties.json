@@ -4,9 +4,10 @@
             "name": "Linux",
             "includePath": [
                 "${workspaceFolder}/**",
-                "${workspaceFolder}/src/include",
-                "${workspaceFolder}/src/cfg",
-                "${workspaceFolder}/src/dot"
+                "${workspaceFolder}/analyzer/src/include",
+                "${workspaceFolder}/analyzer/src/cfg",
+                "${workspaceFolder}/analyzer/src/dot",
+                "${workspaceFolder}/analyzer/src/dfa"
             ],
             "defines": [],
             "compilerPath": "/usr/local/bin/clang",

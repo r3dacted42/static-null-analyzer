@@ -1,8 +1,9 @@
 analyzer
 *.d
 *.o
-*.png
+*.svg
 *.dot
 *.js
 *.json
 *.txt
+!tests/00.json

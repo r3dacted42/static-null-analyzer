@@ -1,7 +1,9 @@
 #include "dot.hpp"
+#include <queue>
 #include <sstream>
+#include <unordered_set>
 
-namespace cfg {
+namespace dot {
 
 std::string DotExporter::getNodeId(node_t node) {
     if (node_ids.find(node) == node_ids.end()) {
@@ -22,10 +24,10 @@ std::string DotExporter::escapeDotLabel(const std::string &s) {
     return result;
 }
 
-std::string DotExporter::toDot(node_t begin_node) {
+std::string DotExporter::toDot(node_t begin_node, std::unordered_set<node_t> probSet) {
     std::stringstream nodes;
     std::stringstream edges;
-    std::set<node_t> visited;
+    std::unordered_set<node_t> visited;
     std::queue<node_t> q;
     q.push(begin_node);
     while (!q.empty()) {
@@ -39,17 +41,17 @@ std::string DotExporter::toDot(node_t begin_node) {
         const bool isBranch = current->next.size() > 1;
         std::stringstream label_ss;
         label_ss << escapeDotLabel(current->label);
-        // if (!current->ptrData.empty()) {
-        //     label_ss << "\\n---"; // Newline in DOT
-        //     for (const auto &pd : current->ptrData) {
-        //         // You can customize this to show more PtrData info
-        //         label_ss << "\\n"
-        //                  << pd.name << " (ref: " << pd.refId << ")";
-        //     }
-        // }
+        if (!current->ptrActions.empty()) {
+            label_ss << "\\n---\\n";
+            for (const auto &pa : current->ptrActions) {
+                label_ss << cfg::getPtrActLabel(pa) << "\\n";
+            }
+        }
         nodes << "  " << current_id << " [label=\"" << label_ss.str() << "\"";
         if (isBranch)
-            nodes << ", shape=oval];\n";
+            nodes << ", shape=oval";
+        if (probSet.contains(current))
+            nodes << ", color=red];\n";
         else
             nodes << "];\n";
         int edgeIdx = 0;
@@ -80,4 +82,4 @@ std::string DotExporter::toDot(node_t begin_node) {
     return final_dot.str();
 }
 
-} // namespace cfg
+} // namespace dot

@@ -3,6 +3,7 @@
 #include "json.hpp"
 #include "cfg.hpp"
 #include "dot.hpp"
+#include "dfa.hpp"
 
 using json = nlohmann::json;
 
@@ -28,9 +29,12 @@ int main(int argc, const char **argv) {
     }
 
     cfg::CFG cfg(ast);
-    cfg::DotExporter exporter;
+    
+    dfa::NullPtrAnalyzer nullAnalyzer;
+    const auto res = nullAnalyzer.analyze(cfg.getBeginNode());
 
-    std::string dot_output = exporter.toDot(cfg.getBeginNode());
+    dot::DotExporter exporter;
+    std::string dot_output = exporter.toDot(cfg.getBeginNode(), res);
     std::cout << dot_output;
 
     return 0;

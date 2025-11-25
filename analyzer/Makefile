@@ -14,7 +14,8 @@ CXXFLAGS = -std=c++23 -g -Wall -Wextra -MMD -MP \
 # -I: Add include paths for your headers
 CPPFLAGS = -I./src/include \
            -I./src/cfg \
-           -I./src/dot
+           -I./src/dot \
+           -I./src/dfa
 
 # --- Project Files ---
 
@@ -24,7 +25,8 @@ TARGET = analyzer
 # Find all .cpp files to compile
 SRCS = src/main.cpp \
        src/cfg/cfg.cpp \
-       src/dot/dot.cpp
+       src/dot/dot.cpp \
+       src/dfa/dfa.cpp
 
 # Generate corresponding object file names (e.g., src/main.o)
 OBJS = $(SRCS:.cpp=.o)

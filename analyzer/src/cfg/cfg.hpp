@@ -99,6 +99,8 @@ using PtrAction = std::variant<PtrActionTypes::None,
                                PtrActionTypes::Deref,
                                PtrActionTypes::Branch>;
 
+std::string getPtrActLabel(const PtrAction &);
+
 struct CFGNode {
     Metadata metadata;
     std::string label;
@@ -124,8 +126,7 @@ struct Other {
 };
 
 struct VarRef {
-    std::string id;
-    std::string name;
+    std::string label;
 };
 
 struct CallExpr {
@@ -155,6 +156,8 @@ using RValue = std::variant<RValTypes::Other,
                             RValTypes::OtherPtr,
                             RValTypes::PtrDeref,
                             RValTypes::NullPtr>;
+
+std::string getRValLabel(const RValue &);
 
 class CFG {
   public:

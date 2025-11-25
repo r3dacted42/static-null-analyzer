@@ -18,3 +18,8 @@ clang -fsyntax-only -Xclang -ast-dump=json -Xclang -ast-dump-filter=check tests/
 ```bash
 jq '.inner[] | select(.kind == "FunctionDecl" and .name == "func")' ast.json > filtered_ast.json
 ```
+
+```bash
+make
+./analyzer tests/00.json | dot -Tsvg -o tests/00.svg
+```
