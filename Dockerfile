@@ -6,6 +6,14 @@ COPY analyzer/Makefile ./
 COPY analyzer/src ./src
 RUN make all
 
+FROM node:lts AS frontend-builder
+WORKDIR /app
+COPY client/package*.json ./
+RUN npm install
+COPY client/ .
+ENV VITE_API_URL="/api"
+RUN npm run build
+
 FROM python:3.10-slim
 RUN apt-get update && apt-get install -y clang jq graphviz \
     --no-install-recommends && rm -rf /var/lib/apt/lists/*
@@ -15,7 +23,7 @@ RUN pip install -r requirements.txt
 
 COPY --from=builder /app/analyzer /usr/local/bin/analyzer
 COPY server/server.py .
-COPY server/public ./public
+COPY --from=frontend-builder /app/dist ./public
 
 EXPOSE 8080
 CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8080"]

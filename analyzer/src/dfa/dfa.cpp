@@ -125,48 +125,21 @@ std::ostream &operator<<(std::ostream &stream, const PtrState &state) {
 
 std::unordered_set<node_t> NullPtrAnalyzer::analyze(node_t begin_node) {
     std::unordered_map<node_t, std::unordered_map<std::string, PtrState>> input;
-    std::unordered_map<std::string, std::string> symTable;
     std::queue<node_t> workList;
     workList.push(begin_node);
     while (!workList.empty()) {
         const auto node = workList.front();
         workList.pop();
         const auto output = flow(node, input[node]);
-        for (const auto &pa : node->ptrActions)
-            if (std::holds_alternative<cfg::PtrActionTypes::Declare>(pa)) {
-                const auto &decl = std::get<cfg::PtrActionTypes::Declare>(pa);
-                symTable[decl.refId] = decl.name;
-            }
         uint succIdx = 0;
         for (const auto &succ : node->next) {
             if ((!input.contains(succ) || output != input[succ]) && succ != node) {
                 input[succ] = join(output, input[succ], succIdx);
                 workList.push(succ);
-                for (const auto &pa : node->ptrActions)
-                if (std::holds_alternative<cfg::PtrActionTypes::Declare>(pa)) {
-                    const auto &decl = std::get<cfg::PtrActionTypes::Declare>(pa);
-                    symTable[decl.refId] = decl.name;
-                }
-                // debug
-                // std::cerr << succ->label << " :\n";
-                // for (const auto &[id, state] : input[succ]) {
-                //     std::cerr << symTable[id] << " : " << state << "\n";
-                // }
-                // std::cerr << "\n";
             }
             succIdx++;
         }
-        // std::cerr << "-----------------------------------\n";
-        // getchar();
     }
-
-    // for (const auto &[node, table] : input) {
-    //     std::cerr << node->label << " :\n";
-    //     for (const auto &[id, state] : table) {
-    //         std::cerr << symTable[id] << " : " << state << "\n";
-    //     }
-    //     std::cerr << "\n";
-    // }
 
     std::unordered_set<node_t> res;
     for (const auto &[node, table] : input) {

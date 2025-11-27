@@ -2,53 +2,59 @@ import subprocess
 import tempfile
 import os
 import shutil
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel
 from fastapi.staticfiles import StaticFiles
-from starlette.background import BackgroundTask
+from fastapi.middleware.cors import CORSMiddleware
+import json
 
-# --- Configuration ---
-# Define paths for tools, assuming they are in the system PATH
 CLANG_CMD = "clang++"
 JQ_CMD = "jq"
 ANALYZER_CMD = "analyzer"
-DOT_CMD = "dot"
 FRONTEND_FILE = "./public/index.html"
 
 app = FastAPI()
+
+origins = [
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:8000",
+    "http://127.0.0.1:8180",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class CodeInput(BaseModel):
     code: str
     func: str
 
-@app.get("/", response_class=HTMLResponse)
-async def get_frontend():
-    if not os.path.exists(FRONTEND_FILE):
-        raise HTTPException(status_code=404, detail="index.html not found.")
-    with open(FRONTEND_FILE, "r") as f:
-        return HTMLResponse(content=f.read())
+class AnalysisResult(BaseModel):
+    dot: str
+    issues: list
 
 def cleanup_dir(path: str):
     if os.path.exists(path):
         shutil.rmtree(path)
 
 @app.post("/api/analyze")
-async def analyze_code(req: CodeInput):
-    """
-    Receives C++ code, runs the full analysis pipeline,
-    and returns the resulting CFG as a PNG image.
-    """
+async def analyze_code(req: CodeInput, tasks: BackgroundTasks):
     code = req.code
     func = req.func
 
     temp_dir = tempfile.mkdtemp()
-    cleanup = BackgroundTask(cleanup_dir, temp_dir)
+    tasks.add_task(cleanup_dir, temp_dir)
     
     code_filename = os.path.join(temp_dir, "user_code.cpp")
     ast_filename = os.path.join(temp_dir, "ast.json")
     filtered_ast_filename = os.path.join(temp_dir, "filtered_ast.json")
-    svg_filename = os.path.join(temp_dir, "graph.svg")
+    dot_filename = os.path.join(temp_dir, "cfg.dot")
+    issues_filename = os.path.join(temp_dir, "issues.json")
 
     try:
         with open(code_filename, "w") as f:
@@ -71,31 +77,25 @@ async def analyze_code(req: CodeInput):
         with open(filtered_ast_filename, "w") as f_out:
             subprocess.run(jq_cmd, stdout=f_out, stderr=subprocess.PIPE, check=True)
 
-        analyzer_cmd = [ANALYZER_CMD, filtered_ast_filename]
+        analyzer_cmd = [ANALYZER_CMD, filtered_ast_filename, dot_filename, issues_filename]
         analyzer_result = subprocess.run(
-            analyzer_cmd, capture_output=True, text=True, check=True
+            analyzer_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True
         )
-        dot_string = analyzer_result.stdout
 
-        dot_cmd = [DOT_CMD, "-Tsvg", "-o", svg_filename]
-        subprocess.run(
-            dot_cmd, input=dot_string, text=True, stderr=subprocess.PIPE, check=True
-        )
-        return FileResponse(
-            svg_filename, 
-            media_type="image/svg+xml",
-            background=cleanup
-        )
+        res = {}
+        with open(issues_filename, "r") as f:
+            res["issues"] = json.load(f)
+        with open(dot_filename, "r") as f:
+            res["dot"] = f.read()
+        return res
 
     except subprocess.CalledProcessError as e:
-        # Handle errors from any of the commands
         raise HTTPException(status_code=500, detail={
-            "error": "Analysis failed",
-            "command": " ".join(e.cmd),
-            "stderr": e.stderr.decode("utf-8") if e.stderr else "No stderr"
+            "error": "analysis failed",
+            "stderr": e.stderr.decode("utf-8") if e.stderr else "no stderr"
         })
     except Exception as e:
         raise HTTPException(status_code=500, detail={"error": str(e)})
 
 
-app.mount("/", StaticFiles(directory="public"), name="public")
+app.mount("/", StaticFiles(directory="public", html=True), name="public")

@@ -84,10 +84,10 @@ void CFG::erase_node(const std::string &id) {
 
 std::string getPtrActLabel(const PtrAction &pact) {
     if (std::holds_alternative<PtrActionTypes::Declare>(pact))
-        return std::format("Declare {}", std::get<PtrActionTypes::Declare>(pact).name);
+        return std::format("declare {}", std::get<PtrActionTypes::Declare>(pact).name);
     if (std::holds_alternative<PtrActionTypes::AssignConst>(pact)) {
         const auto &assignConst = std::get<PtrActionTypes::AssignConst>(pact);
-        const std::string pref = std::format("Assign {} = ", assignConst.name);
+        const std::string pref = std::format("assign {} = ", assignConst.name);
         switch (assignConst.assignType) {
         case PtrActionTypes::AssignConst::AssignType::NullPtr:
             return pref + "nullptr";
@@ -99,26 +99,26 @@ std::string getPtrActLabel(const PtrAction &pact) {
     }
     if (std::holds_alternative<PtrActionTypes::AssignPtr>(pact)) {
         const auto &assignPtr = std::get<PtrActionTypes::AssignPtr>(pact);
-        return std::format("Assign {} = {}", assignPtr.nameL, assignPtr.nameR);
+        return std::format("assign {} = {}", assignPtr.nameL, assignPtr.nameR);
     }
     if (std::holds_alternative<PtrActionTypes::MemMgmt>(pact)) {
         const auto &memMgmt = std::get<PtrActionTypes::MemMgmt>(pact);
         switch (memMgmt.memType) {
         case PtrActionTypes::MemMgmt::MemType::Alloc:
-            return std::format("Alloc {}", memMgmt.name);
+            return std::format("alloc {}", memMgmt.name);
         case PtrActionTypes::MemMgmt::MemType::Dealloc:
-            return std::format("Dealloc {}", memMgmt.name);
+            return std::format("dealloc {}", memMgmt.name);
         }
     }
     if (std::holds_alternative<PtrActionTypes::Deref>(pact))
-        return std::format("Deref {}", std::get<PtrActionTypes::Deref>(pact).name);
+        return std::format("deref {}", std::get<PtrActionTypes::Deref>(pact).name);
     if (std::holds_alternative<PtrActionTypes::Branch>(pact)) {
         const auto &branch = std::get<PtrActionTypes::Branch>(pact);
         switch (branch.branchType) {
         case PtrActionTypes::Branch::BranchType::NotNull:
-            return std::format("Branch {} Not Null", branch.name);
+            return std::format("branch {} not_null", branch.name);
         case PtrActionTypes::Branch::BranchType::Null:
-            return std::format("Branch {} Null", branch.name);
+            return std::format("branch {} null", branch.name);
         }
     }
     return ""; // None
@@ -417,7 +417,9 @@ void CFG::populatePool(const json &data) {
         return;
     }
     case NodeKind::BranchStmt: {
-        const auto joinNode = make_node(id + "_join");
+        const auto _kind = data["kind"];
+        const auto joinId = std::format("{}_join_{}", id, (_kind == "IfStmt" ? "if" : "loop"));
+        const auto joinNode = make_node(joinId);
         joinNode->label = ".";
         break;
     }
@@ -451,7 +453,8 @@ node_t CFG::linkNodes(const json &data, const node_t &prev) {
 
     if (_kind == NodeKind::BranchStmt) {
         const auto &innerData = data["inner"];
-        const auto &joinNode = pool[id + "_join"].get();
+        const auto joinId = std::format("{}_join_{}", id, (kind == "IfStmt" ? "if" : "loop"));
+        const auto &joinNode = pool[joinId].get();
         if (kind == "IfStmt") {
             const auto condNode = linkNodes(innerData[0], last);
             const auto thenEndNode = linkNodes(innerData[1], condNode);
@@ -524,9 +527,9 @@ void CFG::handleJumps() {
                 const auto n = q.front();
                 q.pop();
                 vis.insert(n);
-                if (n->next.size() > 1) {
-                    jumpNode->next.clear();
+                if (n->next.size() > 1 && n->next.back()->metadata.id.contains("loop")) {
                     const auto &joinNode = n->next.back();
+                    jumpNode->next.clear();
                     jumpNode->next.push_back(joinNode);
                     joinNode->prev.push_back(jumpNode);
                     break;

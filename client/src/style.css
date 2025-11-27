@@ -1,0 +1,61 @@
+@import url('https://fonts.googleapis.com/css2family=Fira+Code:wght@300..700&display=swap');
+
+:root {
+    color-scheme: light dark;
+
+    --bg-color: light-dark(#ffff, #1e2124);
+    --fg-color: light-dark(#333333, #d4d4d4);
+}
+
+body, button, input, select, textarea, dialog, pre {
+    font-family: 'Fira Code', monospace;
+}
+
+html, body {
+    height: 100%;
+    margin: 0;
+}
+
+body {
+    color: var(--fg-color);
+    background-color: var(--bg-color);
+}
+
+#app {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+}
+
+svg {
+    polygon[fill="white"] {
+        fill: var(--bg-color);
+    }
+
+    text {
+        fill: var(--fg-color);
+    }
+
+    path {
+        stroke: var(--fg-color);
+    }
+
+    polygon[fill="none"][stroke="black"] {
+        stroke: var(--fg-color);
+    }
+    
+    polygon[fill="black"][stroke="black"] {
+        stroke: var(--fg-color);
+        fill: var(--fg-color);
+    }
+
+    ellipse {
+        stroke: var(--fg-color);
+    }
+}
+
+.material-symbols-outlined {
+    font-size: 1.2rem;
+    line-height: 1.5rem;
+}

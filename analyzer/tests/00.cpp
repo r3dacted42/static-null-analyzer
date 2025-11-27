@@ -24,7 +24,8 @@ int check(int *param) {
 
     for (int i = 0; i < 10; i++) {
         x = i + 5;
-        break;
+        if (p2)
+            break;
     }
 
     while (p1);
