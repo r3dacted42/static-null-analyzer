@@ -12,7 +12,6 @@ import json
 CLANG_CMD = "clang++"
 JQ_CMD = "jq"
 ANALYZER_CMD = "analyzer"
-FRONTEND_FILE = "./public/index.html"
 
 app = FastAPI()
 

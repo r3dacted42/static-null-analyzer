@@ -1,25 +1,38 @@
-```bash
-cmake -B build -S .
-cmake --build build
-```
+# analyzer
+
+- works on the Clang AST: exported to JSON and filtered for a only a particular function definition
+- creates CFG by recursive descent on the AST nodes and stores pointer-related data
+- runs a simple data flow analysis on the CFG to track states of pointers
+- flags any potential null pointer dereferences on the output CFG (graphviz dot format) and as a JSON of issues
+
+## output format
+
+- `graph.dot`: CFG in graphviz DOT format
+- `issues.json`:
+  ```json
+  [ // list of issues
+    {
+      "start_offset": number,
+      "end_offset": number,
+      "message": string // contains var name
+    }
+  ]
+  ```
+
+## how to run
+
+for analyzing a function named `func` defined in file "input.cpp"
 
 ```bash
-clang -fsyntax-only -Xclang -ast-list source.cpp
-```
+# export clang AST as JSON
+clang -fsyntax-only -Xclang -ast-dump=json -Xclang -ast-dump-filter=func input.cpp > ast.json
 
-```bash
-clang -fsyntax-only -Xclang -ast-dump=json -Xclang -ast-dump-filter=function source.cpp
-```
+# secondary filtering (for files with similar function names)
+jq '.inner[] | select(.kind == "FunctionDecl" and .name == "func")' ast.json > filt_ast.json
 
-```bash
-clang -fsyntax-only -Xclang -ast-dump=json -Xclang -ast-dump-filter=check tests/00.cpp > tests/00.json
-```
-
-```bash
-jq '.inner[] | select(.kind == "FunctionDecl" and .name == "func")' ast.json > filtered_ast.json
-```
-
-```bash
+# build analyzer
 make
-./analyzer tests/00.json | dot -Tsvg -o tests/00.svg
+
+# run analyzer: input_json output_dot output_issue_json
+./analyzer filt_ast.json graph.dot issues.json
 ```
