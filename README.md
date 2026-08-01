@@ -12,6 +12,8 @@ for more information about individual components, check out their READMEs
 
 <img src="https://github.com/r3dacted42/static-null-analyzer/blob/master/screenshot.png?raw=true">
 
+<img src="https://github.com/r3dacted42/static-null-analyzer/blob/master/architecture.png?raw=true">
+
 ## containerization
 
 - analyzer (C++ app) 
