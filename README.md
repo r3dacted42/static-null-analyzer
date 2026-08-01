@@ -10,9 +10,9 @@ docker image tag: `docker.io/r3dacted42/static-null-analyzer:latest`
 
 for more information about individual components, check out their READMEs
 
-<img src="https://github.com/r3dacted42/static-null-analyzer/blob/master/screenshot.png?raw=true">
+![Screenshot](https://github.com/r3dacted42/static-null-analyzer/blob/master/screenshot.png?raw=true)
 
-<img src="https://github.com/r3dacted42/static-null-analyzer/blob/master/architecture.png?raw=true">
+![Architecture Diagram](https://github.com/r3dacted42/static-null-analyzer/blob/master/architecture.svg?raw=true)
 
 ## containerization
 
